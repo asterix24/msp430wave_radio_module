@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?ccsproject version="1.0"?>
+<projectOptions>
+	<ccsVersion value="7.0.0"/>
+	<deviceVariant value="MSP430F5529"/>
+	<deviceFamily value="MSP430"/>
+	<deviceEndianness value="little"/>
+	<codegenToolVersion value="16.9.0.LTS"/>
+	<isElfFormat value="true"/>
+	<connection value="common/targetdb/connections/TIMSP430-USB.xml"/>
+	<linkerCommandFile value="lnk_msp430f5529.cmd"/>
+	<rts value="libc.a"/>
+	<createSlaveProjects value=""/>
+	<templateProperties value="id=C0_SimpleSend.projectspec.C0_SimpleSend,"/>
+	<origin value="/Users/asterix/src/workspace_v7/ez430_ap"/>
+	<filesToOpen value=""/>
+	<isTargetManual value="false"/>
+</projectOptions>
