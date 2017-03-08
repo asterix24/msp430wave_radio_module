@@ -31,3 +31,7 @@
 # Debug files
 *.dSYM/
 *.su
+.metadata/
+RemoteSystemsTempFiles/
+ez430_ap/.launches/
+.jxbrowser-data/
