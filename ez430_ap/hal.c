@@ -41,11 +41,10 @@
 #include "USB_config/descriptors.h"
 
 #include "hal.h"
+#include "project.h"
 
 #define GPIO_ALL        GPIO_PIN0 | GPIO_PIN1 | GPIO_PIN2 | GPIO_PIN3 | \
         GPIO_PIN4 | GPIO_PIN5 | GPIO_PIN6 | GPIO_PIN7
-
-
 
 /*
  * This functions drives all the outputs low which may not be optimal for a
@@ -121,4 +120,5 @@ void USBHAL_initClocks(uint32_t mclkFreq)
                 mclkFreq / 1000,
                 mclkFreq / 32768);
 }
+
 //Released_Version_5_10_00_17
