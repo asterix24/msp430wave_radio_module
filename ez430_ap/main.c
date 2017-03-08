@@ -29,6 +29,7 @@
 #include "driverlib.h"
 #include "ccSPI.h"
 #include "ccxx00.h"
+#include "project.h"
 
 #include "USB_config/descriptors.h"
 #include "USB_API/USB_Common/device.h"
@@ -43,7 +44,6 @@
 #include "hal.h"
 
 // Function declarations
-void convertTimeBinToASCII(uint8_t* timeStr);
 void initRTC(void);
 
 // Application globals
@@ -52,53 +52,6 @@ volatile uint8_t bSendTimeToHost = FALSE;       // RTC-->main():  "send the time
 uint8_t timeStr[9];                    // Stores the time as an ASCII string
 
 
-void InitClock_v(void)
-{
-  // Enable 32kHz ACLK on XT1 via external crystal and 26MHz on XT2 via external clock signal
-  P5SEL |=  (BIT2 | BIT3 | BIT4 | BIT5); // Select XINs and XOUTs
-//  UCSCTL6 &= ~XT1OFF;        // Switch on XT1, keep highest drive strength - default
-//  UCSCTL6 |=  XCAP_3;        // Set internal load caps to 12pF - default
-//  UCSCTL4 |=  SELA__XT1CLK;  // Select XT1 as ACLK - default
-
-  // Configure clock system
-  _BIS_SR(SCG0);    // Disable FLL control loop
-  UCSCTL0 = 0x0000; // Set lowest DCOx, MODx to avoid temporary overclocking
-  // Select suitable DCO frequency range and keep modulation enabled
-  UCSCTL1 = DCORSEL_5; // DCO frequency above 8MHz but not bigger than 16MHz
-  UCSCTL2 = FLLD__2 | (((MCLK_FREQUENCY + 0x4000) / 0x8000) - 1); // Set FLL loop divider to 2 and
-                                                                  // required DCO multiplier
-//  UCSCTL3 |= SELREF__XT1CLK;                    // Select XT1 as FLL reference - default
-//  UCSCTL4 |= SELS__DCOCLKDIV | SELM__DCOCLKDIV; // Select XT1 as ACLK and
-                                                  // divided DCO for SMCLK and MCLK - default
-  _BIC_SR(SCG0);                                  // Enable FLL control loop again
-
-  // Loop until XT1 and DCO fault flags are reset
-  do
-  {
-    // Clear fault flags
-    UCSCTL7 &= ~(XT2OFFG | XT1LFOFFG | DCOFFG);
-    SFRIFG1 &= ~OFIFG;
-  } while ((SFRIFG1 & OFIFG));
-
-  // Worst-case settling time for the DCO when changing the DCO range bits is:
-  // 32 x 32 x MCLK / ACLK
-  __delay_cycles(((32 * MCLK_FREQUENCY) / 0x8000) * 32);
-
-  _BIS_SR(SCG0);    // Disable FLL control loop
-}
-
-
-void InitPorts_v(void)
-{
-  // Initialize all unused pins as low level output
-  P4OUT  &= ~(                            BIT4 | BIT5 | BIT6 | BIT7);
-  P5OUT  &= ~(BIT0 | BIT1                                          );
-  P6OUT  &= ~(BIT0 | BIT1 | BIT2 | BIT3                            );
-  P4DIR  |=  (                            BIT4 | BIT5 | BIT6 | BIT7);
-  P5DIR  |=  (BIT0 | BIT1                                          );
-  P6DIR  |=  (BIT0 | BIT1 | BIT2 | BIT3                            );
-}
-
 /*
  * ======== main ========
  */
@@ -106,6 +59,7 @@ void main(void)
 {
     WDT_A_hold(WDT_A_BASE); //Stop watchdog timer
     P5SEL |= BIT4 | BIT5;
+
     // As fast as possible 26MHz to GDO2 pin of CC1101 as it is required to clock USB
     CC_SPI_Init_v();
     //CC_SPI_SelectChipWaitUntilReady_v();
@@ -117,33 +71,33 @@ void main(void)
     UCSCTL6 |= XT2BYPASS;
 
     // Initialize unused port pins
-    InitPorts_v();
-    INIT_RX_ACTIVITY;
-    LED_ON;
-
+    USBHAL_initPorts();
     // Set Vcore to the level required for USB operation
     PMM_setVCore(PMM_CORE_LEVEL_3);
     // Initialize clock system
-    InitClock_v();
-    // Initialize debug output pins
-    INIT_TX_ACTIVITY;
+    USBHAL_initClocks(MCLK_FREQUENCY);
+    // Initialize the USB module, and connect to the USB host (if one is present)
+    USB_setup(TRUE, TRUE);
 
-        // Initialize the USB module, and connect to the USB host (if one is present)
-     USB_setup(TRUE, TRUE);
-     LED_OFF;
+    LED_INIT();
+    LED_OFF();
+
     __enable_interrupt();    // Enable general interrupts
-    while (1) {
+
+    while (1)
+    {
+        LED_TOGGLE();
+
         // Enter LPM0, which keeps the DCO/FLL active but shuts off the
         // CPU.  For USB, you can't go below LPM0!
-       // __bis_SR_register(LPM0_bits + GIE);
-            if (USBCDC_sendDataInBackground("Hello!\n", sizeof("Hello!\n"), CDC0_INTFNUM, 1000))
-            {
-              _NOP();  // If it fails, it'll end up here.  Could happen if
-                       // the cable was detached after the connectionState()
-            }           // check, or if somehow the retries failed
-       }  //while(1)
-}  //main()
-
+        //__bis_SR_register(LPM0_bits + GIE);
+        if (USBCDC_sendDataInBackground("Hello!\n", sizeof("Hello!\n"), CDC0_INTFNUM, 1000))
+        {
+            _NOP();
+        }
+        __delay_cycles(10000000);
+    }
+}
 
 // Starts a real-time clock on TimerA_0.  Earlier we assigned ACLK to be driven
 // by the REFO, at 32768Hz.  So below we set the timer to count up to 32768 and
@@ -182,41 +136,6 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TIMER0_A0_ISR (void)
 
     bSendTimeToHost = TRUE;                 // Time to update
     __bic_SR_register_on_exit(LPM3_bits);   // Exit LPM
-}
-
-
-// Convert a number 'bin' of value 0-99 into its ASCII equivalent.  Assumes
-// str is a two-byte array.
-void convertTwoDigBinToASCII(uint8_t bin, uint8_t* str)
-{
-    str[0] = '0';
-    if (bin >= 10)
-    {
-        str[0] = (bin / 10) + 48;
-    }
-    str[1] = (bin % 10) + 48;
-}
-
-
-// Convert the binary globals hour/min/sec into a string, of format "hr:mn:sc"
-// Assumes str is an nine-byte string.
-void convertTimeBinToASCII(uint8_t* str)
-{
-    uint8_t hourStr[2], minStr[2], secStr[2];
-
-    convertTwoDigBinToASCII(hour, hourStr);
-    convertTwoDigBinToASCII(min, minStr);
-    convertTwoDigBinToASCII(sec, secStr);
-
-    str[0] = hourStr[0];
-    str[1] = hourStr[1];
-    str[2] = ':';
-    str[3] = minStr[0];
-    str[4] = minStr[1];
-    str[5] = ':';
-    str[6] = secStr[0];
-    str[7] = secStr[1];
-    str[8] = '\n';
 }
 
 

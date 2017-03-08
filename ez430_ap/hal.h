@@ -58,4 +58,7 @@
  */
 void USBHAL_initPorts(void);
 void USBHAL_initClocks(uint32_t mclkFreq);
+void InitClock_v(void);
+void InitPorts_v(void);
+
 //Released_Version_5_10_00_17
