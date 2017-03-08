@@ -34,4 +34,6 @@
 .metadata/
 RemoteSystemsTempFiles/
 ez430_ap/.launches/
+ez430_ap/Debug/
 .jxbrowser-data/
+ez430_ap/.settings/
