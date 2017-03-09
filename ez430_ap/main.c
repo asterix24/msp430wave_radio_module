@@ -51,6 +51,7 @@ volatile uint8_t hour = 4, min = 30, sec = 00;  // Real-time clock (RTC) values.
 volatile uint8_t bSendTimeToHost = FALSE;       // RTC-->main():  "send the time over USB"
 uint8_t timeStr[9];                    // Stores the time as an ASCII string
 
+#define COMPARE_VALUE 50000
 
 /*
  * ======== main ========
@@ -79,15 +80,31 @@ void main(void)
     // Initialize the USB module, and connect to the USB host (if one is present)
     USB_setup(TRUE, TRUE);
 
-    LED_INIT();
-    LED_OFF();
+    //Start timer in continuous mode sourced by SMCLK
+
+    Timer_A_initContinuousModeParam initContParam = {0};
+    initContParam.clockSource = TIMER_A_CLOCKSOURCE_SMCLK;
+    initContParam.clockSourceDivider = TIMER_A_CLOCKSOURCE_DIVIDER_1;
+    initContParam.timerInterruptEnable_TAIE = TIMER_A_TAIE_INTERRUPT_DISABLE;
+    initContParam.timerClear = TIMER_A_DO_CLEAR;
+    initContParam.startTimer = false;
+    Timer_A_initContinuousMode(TIMER_A1_BASE, &initContParam);
+
+    Timer_A_initCompareModeParam initCompParam = {0};
+    initCompParam.compareRegister = TIMER_A_CAPTURECOMPARE_REGISTER_0;
+    initCompParam.compareInterruptEnable = TIMER_A_CAPTURECOMPARE_INTERRUPT_ENABLE;
+    initCompParam.compareOutputMode = TIMER_A_OUTPUTMODE_OUTBITVALUE;
+    initCompParam.compareValue = COMPARE_VALUE;
+
+    Timer_A_initCompareMode(TIMER_A1_BASE, &initCompParam);
+    Timer_A_startCounter(TIMER_A1_BASE, TIMER_A_CONTINUOUS_MODE);
+
+    GPIO_setAsOutputPin(LED_PORT, LED_PINS);
 
     __enable_interrupt();    // Enable general interrupts
 
     while (1)
     {
-        LED_TOGGLE();
-
         // Enter LPM0, which keeps the DCO/FLL active but shuts off the
         // CPU.  For USB, you can't go below LPM0!
         //__bis_SR_register(LPM0_bits + GIE);
@@ -99,45 +116,24 @@ void main(void)
     }
 }
 
-// Starts a real-time clock on TimerA_0.  Earlier we assigned ACLK to be driven
-// by the REFO, at 32768Hz.  So below we set the timer to count up to 32768 and
-// roll over; and generate an interrupt when it rolls over.
-void initRTC(void)
-{
-    TA0CCR0 = 32768;
-    TA0CTL = TASSEL_1+MC_1+TACLR; // ACLK, count to CCR0 then roll, clear TAR
-    TA0CCTL0 = CCIE;              // Gen int at rollover (TIMER0_A0 vector)
-}
 
-
-// Timer0 A0 interrupt service routine.  Generated when TimerA_0 (real-time
-// clock) rolls over from 32768 to 0, every second.
-#if defined(__TI_COMPILER_VERSION__) || (__IAR_SYSTEMS_ICC__)
-#pragma vector=TIMER0_A0_VECTOR
-__interrupt void TIMER0_A0_ISR (void)
-#elif defined(__GNUC__) && (__MSP430__)
-void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TIMER0_A0_ISR (void)
-#else
-#error Compiler not found!
+#if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
+#pragma vector=TIMER1_A0_VECTOR
+__interrupt
+#elif defined(__GNUC__)
+__attribute__((interrupt(TIMER1_A0_VECTOR)))
 #endif
+void TIMER1_A0_ISR(void)
 {
-    if (sec++ == 60)
-    {
-        sec = 0;
-        if (min++ == 60)
-        {
-            min = 0;
-            if (hour++ == 24)
-            {
-                hour = 0;
-            }
-        }
-    }
+    uint16_t compVal = Timer_A_getCaptureCompareCount(TIMER_A1_BASE,
+                            TIMER_A_CAPTURECOMPARE_REGISTER_0) + COMPARE_VALUE;
 
-    bSendTimeToHost = TRUE;                 // Time to update
-    __bic_SR_register_on_exit(LPM3_bits);   // Exit LPM
+    GPIO_toggleOutputOnPin(LED_PORT, LED_PINS);
+    Timer_A_setCompareValue(TIMER_A1_BASE,
+                            TIMER_A_CAPTURECOMPARE_REGISTER_0,
+                            compVal
+                            );
 }
-
 
 /*
  * ======== UNMI_ISR ========
@@ -159,7 +155,6 @@ void __attribute__ ((interrupt(UNMI_VECTOR))) UNMI_ISR (void)
                 __no_operation();
                 break;
         case SYSUNIV_OFIFG:
-
                 UCS_clearFaultFlag(UCS_XT2OFFG);
                 UCS_clearFaultFlag(UCS_DCOFFG);
                 SFR_clearInterrupt(SFR_OSCILLATOR_FAULT_INTERRUPT);
